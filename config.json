@@ -6,7 +6,7 @@
             "repo_host": "github.com",
             "repo_user": "mhei",
             "repo_name": "mmc-utils",
-            "branch": "main",
+            "branch": "master",
             "commit": "",
             "sparse": "",
             "tool": "gcc",
