@@ -1,0 +1,292 @@
+---
+name: "S1 - Detect versions"
+
+on:
+  workflow_call:
+    inputs:
+      job:
+        description: Stringified JSON of job
+        required: true
+        type: string
+      config:
+        description: Stringified JSON of config
+        required: true
+        type: string
+
+jobs:
+  Detect-versions:
+    runs-on: ubuntu-latest
+    strategy:
+      max-parallel: 2
+      fail-fast: false
+      matrix:
+        job: ${{ fromJSON(inputs.job) }}
+        config: ${{ fromJSON(inputs.config) }}
+    env:
+      primaryRepoHost: ${{ matrix.config.primary_repo.repo_host }}
+      primaryRepoUser: ${{ matrix.config.primary_repo.repo_user }}
+      primaryRepoName: ${{ matrix.config.primary_repo.repo_name }}
+      primaryName:     ${{ matrix.config.primary_repo.name }}
+      primaryBranch:   ${{ matrix.config.primary_repo.branch }}
+      primaryCommit:   ${{ matrix.config.primary_repo.commit }}
+      primarySparse:   ${{ matrix.config.primary_repo.sparse }}
+      primaryRepo:     ${{ matrix.config.primary_repo.repo_host }}/${{ matrix.config.primary_repo.repo_user }}/${{ matrix.config.primary_repo.repo_name }}
+      primaryApiRepo:  ${{ matrix.config.primary_repo.repo_host }}/api/v1/repos/${{ matrix.config.primary_repo.repo_user }}/${{ matrix.config.primary_repo.repo_name }}
+      primaryDir:      ${{ matrix.config.primary_repo.name }}_${{ matrix.config.primary_repo.commit }}
+      primaryTool:     ${{ matrix.config.primary_repo.tool }}
+      primaryDevice:   ${{ matrix.config.primary_repo.device }}
+      primaryPAT:      ${{ secrets.U_GITEA_PAT }}
+      auxiliaryRepoHost: ${{ matrix.config.auxiliary_repo.repo_host }}
+      auxiliaryRepoUser: ${{ matrix.config.auxiliary_repo.repo_user }}
+      auxiliaryRepoName: ${{ matrix.config.auxiliary_repo.repo_name }}
+      auxiliaryName:     ${{ matrix.config.auxiliary_repo.name }}
+      auxiliaryBranch:   ${{ matrix.config.auxiliary_repo.branch }}
+      auxiliaryCommit:   ${{ matrix.config.auxiliary_repo.commit }}
+      auxiliarySparse:   ${{ matrix.config.auxiliary_repo.sparse }}
+      auxiliaryRepo:     ${{ matrix.config.auxiliary_repo.repo_host }}/${{ matrix.config.auxiliary_repo.repo_user }}/${{ matrix.config.auxiliary_repo.repo_name }}
+      auxiliaryApiRepo:  ${{ matrix.config.auxiliary_repo.repo_host }}/api/v1/repos/${{ matrix.config.auxiliary_repo.repo_user }}/${{ matrix.config.auxiliary_repo.repo_name }}
+      auxiliaryDir:      ${{ matrix.config.auxiliary_repo.name }}_${{ matrix.config.auxiliary_repo.commit }}
+      auxiliaryPAT:      ${{ secrets.U_GITEA_PAT }}
+      inter_ver_file:            ${{ matrix.config.inter_ver_file }}
+    steps:
+    - name: S200 - Check workflow environments
+      id: check
+      shell: bash
+      run: |
+        ## VARs setup
+        outputs() { step_id="${{ github.action }}"; for var in "$@" ; do echo steps.${step_id}.outputs.${var}="${!var}"; echo "${var}=${!var}" >> $GITHUB_OUTPUT; done; }
+        if [ "${{ env.primarySparse }}" == '' ]; then
+          primary_sparse_set=false;
+        else
+          primary_sparse_set=true;
+        fi
+        if [ "${{ env.primaryCommit }}" == '' ]; then
+          primary_commit_set=false;
+        else
+          primary_commit_set=true;
+        fi
+        if [ "${{ env.auxiliarySparse }}" == '' ]; then
+          auxiliary_sparse_set=false;
+        else
+          auxiliary_sparse_set=true;
+        fi
+        if [ "${{ env.auxiliaryCommit }}" == '' ]; then
+          auxiliary_commit_set=false;
+        else
+          auxiliary_commit_set=true;
+        fi
+        outputs primary_sparse_set primary_commit_set auxiliary_sparse_set auxiliary_commit_set
+
+        if [ "${{ env.U_ACT }}" == 'act_nas6' ]; then
+          echo "## used act_nas6"
+          git config --global url."http://nas6.ycxy.tech:2082/".insteadof "https://gitea.ycxy.tech/"
+        elif [ "${{ env.U_ACT }}" == 'act_cf6' ]; then
+          echo "## used act_cf6"
+          git config --global url."http://cf6.ycxy.tech:2082/".insteadof "https://gitea.ycxy.tech/"
+        elif [ "${{ env.U_ACT }}" == 'act_lh' ]; then
+          echo "## used act_lh"
+          git config --global url."http://192.168.1.7:2082/".insteadof "https://gitea.ycxy.tech/"
+        fi
+    - name: S210 - Update workflow environments
+      if: ${{ steps.check.outputs.primary_commit_set != 'true' }}
+      shell: bash
+      run: |
+        set -v
+        escapedSparseDir="$(echo $primarySparse | sed 's;/;%2F;g')"
+        if [ "${{ steps.check.outputs.primary_sparse_set }}" == 'true' ]; then
+          commit=$(curl -X GET -H "Content-Type:application/json" "https://$primaryPAT@$primaryApiRepo/commits?sha=$primaryBranch&path=$escapedSparseDir" | jq -r '.[0].sha')
+        else
+          commit="$(git ls-remote https://$primaryPAT@$primaryRepo --tags $primaryBranch | awk '{print $1;}')";
+        fi
+        echo "primaryCommit=$commit" >> $GITHUB_ENV
+        echo "primaryDir=${primaryName}_${commit}" >> $GITHUB_ENV
+    - name: S211 - Update workflow environments
+      if: ${{ env.auxiliaryName != '' && steps.check.outputs.auxiliary_commit_set != 'true' }}
+      shell: bash
+      run: |
+        set -v
+        escapedSparseDir="$(echo $auxiliarySparse | sed 's;/;%2F;g')"
+        if [ "${{ steps.check.outputs.auxiliary_sparse_set }}" == 'true' ]; then
+          commit=$(curl -X GET -H "Content-Type:application/json" "https://$auxiliaryPAT@$auxiliaryApiRepo/commits?sha=$auxiliaryBranch&path=$escapedSparseDir" | jq -r '.[0].sha')
+        else
+          commit="$(git ls-remote https://$auxiliaryPAT@$auxiliaryRepo --tags $auxiliaryBranch | awk '{print $1;}')";
+        fi
+        echo "auxiliaryCommit=$commit" >> $GITHUB_ENV
+        echo "auxiliaryDir=${auxiliaryName}_${commit}" >> $GITHUB_ENV
+    - name: S220 - Initialize workflow variables
+      id: vars
+      shell: bash
+      run: |
+        ## VARs setup
+        outputs() { step_id="${{ github.action }}"; for var in "$@" ; do echo steps.${step_id}.outputs.${var}="${!var}"; echo "${var}=${!var}" >> $GITHUB_OUTPUT; done; }
+        ## DIRs setup
+        if [ "${{ runner.os }}" == 'Windows' ]; then
+          gh_workspace_nix="$(cygpath -u '${{ github.workspace }}')"
+          gh_workspace_mix="$(cygpath -m '${{ github.workspace }}')"
+        else
+          gh_workspace_nix="${{ github.workspace }}"
+          gh_workspace_mix="${{ github.workspace }}"
+        fi
+        echo "gh_workspace_nix=${gh_workspace_nix}" >> $GITHUB_ENV
+        echo "gh_workspace_mix=${gh_workspace_mix}" >> $GITHUB_ENV
+
+        source_dir=$gh_workspace_mix/$primaryDir/$primaryName
+        build_dir=$gh_workspace_mix/$primaryDir/build
+        build_dir=$source_dir
+        install_dir=$gh_workspace_mix/install
+
+        outputs source_dir build_dir install_dir
+        echo "source_dir=${source_dir}" >> $GITHUB_ENV
+        echo "build_dir=${build_dir}" >> $GITHUB_ENV
+        echo "install_dir=${install_dir}" >> $GITHUB_ENV
+
+        if [ "${{ env.auxiliaryName }}" != '' ]; then
+          aux_source_dir=$gh_workspace_mix/$auxiliaryDir/$auxiliaryName
+          aux_build_dir=$gh_workspace_mix/$auxiliaryDir/build
+          aux_build_dir=$aux_source_dir
+          aux_install_dir=$gh_workspace_mix/install
+
+          outputs aux_source_dir aux_build_dir aux_install_dir
+          echo "aux_source_dir=${aux_source_dir}" >> $GITHUB_ENV
+          echo "aux_build_dir=${aux_build_dir}" >> $GITHUB_ENV
+          echo "aux_install_dir=${aux_install_dir}" >> $GITHUB_ENV
+        fi
+    - name: S230 - Create workflow directories
+      shell: bash
+      run: |
+        ## Create build/work space
+        [ -z $primaryDir ] || mkdir -p $primaryDir
+        [ -z $auxiliaryDir ] || mkdir -p $auxiliaryDir
+        pwd && ls
+    - name: S240 - Install workflow prerequisites
+      shell: bash
+      run: |
+        ## Install/setup prerequisites
+
+    - name: S300 - Restore primary source
+      id: primary-source-cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.primaryName }}-${{ env.primaryDevice }}-source.tar
+        key: ${{ env.primaryName }}-${{ env.primaryDevice }}-source-${{ env.primaryCommit }}
+    - name: S301 - Restore auxiliary source
+      id: auxiliary-source-cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.auxiliaryName }}-source.tar
+        key: ${{ env.auxiliaryName }}-source-${{ env.auxiliaryCommit }}
+    - name: S310 - Clone primary source
+      if: ${{ steps.primary-source-cache.outputs.cache-hit != 'true' }}
+      working-directory: ${{ github.workspace }}/${{ env.primaryDir }}
+      run: |
+        set -v
+        ## cd $primaryDir
+        rm -vrf $primaryName || true
+        if [ "${{ steps.check.outputs.primary_sparse_set }}" == 'true' ]; then
+          git clone --filter=blob:none --no-checkout --depth 1 --sparse --branch $primaryBranch https://$primaryPAT@$primaryRepo $primaryName;
+          cd $primaryName;
+          git sparse-checkout add $primarySparse;
+          git checkout;
+        else
+          git clone --recursive --branch $primaryBranch https://$primaryPAT@$primaryRepo $primaryName --depth=1;
+        fi
+        pwd
+    - name: S311 - Clone auxiliary source
+      if: ${{ env.auxiliaryName != '' && steps.auxiliary-source-cache.outputs.cache-hit != 'true' }}
+      working-directory: ${{ github.workspace }}/${{ env.auxiliaryDir }}
+      run: |
+        set -v
+        ## cd $auxiliaryDir
+        rm -vrf $auxiliaryName || true
+        if [ "${{ steps.check.outputs.auxiliary_sparse_set }}" == 'true' ]; then
+          git clone --filter=blob:none --no-checkout --depth 1 --sparse --branch $auxiliaryBranch https://$auxiliaryPAT@$auxiliaryRepo $auxiliaryName;
+          cd $auxiliaryName;
+          git sparse-checkout add $auxiliarySparse;
+          git checkout;
+        else
+          git clone --recursive --branch $auxiliaryBranch https://$auxiliaryPAT@$auxiliaryRepo $auxiliaryName --depth=1;
+        fi
+        pwd
+    - name: S320 - Archive primary source
+      if: ${{ steps.primary-source-cache.outputs.cache-hit != 'true' }}
+      run: |
+        uname -a
+        tar -cf ${{ env.primaryName }}-${{ env.primaryDevice }}-source.tar ${{ env.primaryDir }}
+    - name: S321 - Archive auxiliary source
+      if: ${{ env.auxiliaryName != '' && steps.auxiliary-source-cache.outputs.cache-hit != 'true' }}
+      run: |
+        uname -a
+        tar -cf ${{ env.auxiliaryName }}-source.tar ${{ env.auxiliaryDir }}
+    - name: S330 - Extract primary source tarball
+      if: ${{ steps.primary-source-cache.outputs.cache-hit == 'true' }}
+      run: |
+        tar -xvf ${{ env.primaryName }}-${{ env.primaryDevice }}-source.tar
+    - name: S331 - Extract auxiliary source tarball
+      if: ${{ env.auxiliaryName != '' && steps.auxiliary-source-cache.outputs.cache-hit == 'true' }}
+      run: |
+        tar -xvf ${{ env.auxiliaryName }}-source.tar
+
+    - name: S400 - Parse source versions
+      shell: bash
+      run: |
+        # The target triplet
+        triplet="${{ matrix.job.target }}"
+        # Split into architecture, vendor, and OS-ABI
+        IFS='-' read -r arch vendor os abi <<< $(echo "$triplet" | sed 's/\(.*-\)\(.*\)-/\1\2-/')
+        # Output the parsed values
+        echo "Architecture: $arch"
+        echo "Vendor: $vendor"
+        echo "Operating System: $os"
+        echo "ABI: $abi"
+
+        # Path to the version file
+        #file="$primaryDir/$primaryName/$primarySparse/version.txt"
+        # Extract the major, minor, and patch version numbers
+        #major=$(grep '^major=' "$file" | cut -d'=' -f2)
+        #minor=$(grep '^minor=' "$file" | cut -d'=' -f2)
+        #patch=$(grep '^patch=' "$file" | cut -d'=' -f2)
+        # Combine the values into a version string
+        version="$major$minor-rev$patch"
+        cd $source_dir; version="$(shell git describe --abbrev=6 --always --tags)"; cd -
+        # Print the version
+        echo "## ${{ env.primaryName }} Version: $version"
+
+        [ -z $inter_ver_file ] || inter_ver_file="inter_ver_file.txt"
+        echo "primaryVer=$version"                > $inter_ver_file
+        echo "primaryCommit=$primaryCommit"      >> $inter_ver_file
+        echo "target_arch=$arch"                 >> $inter_ver_file
+        echo "target_vendor=$vendor"             >> $inter_ver_file
+        echo "target_os=$os"                     >> $inter_ver_file
+        echo "target_abi=$abi"                   >> $inter_ver_file
+
+        if [ "${{ env.auxiliaryName }}" != '' ]; then
+          # Path to the version file
+          file="$auxiliaryDir/$auxiliaryName/$auxiliarySparse/version.txt";
+          major=$(grep '^major=' "$file" | cut -d'=' -f2);
+          minor=$(grep '^minor=' "$file" | cut -d'=' -f2);
+          patch=$(grep '^patch=' "$file" | cut -d'=' -f2);
+          # Combine the values into a version string
+          version="$major.$minor-rev$patch";
+          echo "## ${{ env.auxiliaryName }} Version: $version";
+          echo "auxiliaryVer=$version"               >> $inter_ver_file;
+          echo "auxiliaryCommit=$auxiliaryCommit"    >> $inter_ver_file;
+        fi
+
+    - name: S800 - Upload versions artifact
+      uses: actions/upload-artifact@master
+      with:
+        name: ${{ env.inter_ver_file }}
+        path: ${{ github.workspace }}/${{ env.inter_ver_file }}
+      if: ${{ always() }}
+    - name: S810 - Upload primary source artifact
+      uses: actions/upload-artifact@master
+      with:
+        name: ${{ env.primaryName }}-${{ env.primaryDevice }}-source-${{ env.primaryCommit }}
+        path: ${{ env.primaryName }}-${{ env.primaryDevice }}-source.tar
+      if: ${{ always() }}
+    - name: S811 - Upload auxiliary source artifact
+      uses: actions/upload-artifact@master
+      with:
+        name: ${{ env.auxiliaryName }}-source-${{ env.auxiliaryCommit }}
+        path: ${{ env.auxiliaryName }}-source.tar
+      if: ${{ env.auxiliaryName != '' }}

@@ -1,0 +1,355 @@
+---
+name: "S2 - Build target"
+
+on:
+  workflow_call:
+    inputs:
+      job:
+        description: Stringified JSON of job
+        required: true
+        type: string
+      config:
+        description: Stringified JSON of config
+        required: true
+        type: string
+
+jobs:
+  Build:
+    runs-on: ${{ matrix.job.os }}
+    strategy:
+      max-parallel: 2
+      fail-fast: false
+      matrix:
+        job: ${{ fromJSON(inputs.job) }}
+        config: ${{ fromJSON(inputs.config) }}
+    env:
+      primaryRepoHost: ${{ matrix.config.primary_repo.repo_host }}
+      primaryRepoUser: ${{ matrix.config.primary_repo.repo_user }}
+      primaryRepoName: ${{ matrix.config.primary_repo.repo_name }}
+      primaryName:     ${{ matrix.config.primary_repo.name }}
+      primaryBranch:   ${{ matrix.config.primary_repo.branch }}
+      primaryCommit:   ${{ matrix.config.primary_repo.commit }}
+      primarySparse:   ${{ matrix.config.primary_repo.sparse }}
+      primaryRepo:     ${{ matrix.config.primary_repo.repo_host }}/${{ matrix.config.primary_repo.repo_user }}/${{ matrix.config.primary_repo.repo_name }}
+      primaryApiRepo:  ${{ matrix.config.primary_repo.repo_host }}/api/v1/repos/${{ matrix.config.primary_repo.repo_user }}/${{ matrix.config.primary_repo.repo_name }}
+      primaryDir:      ${{ matrix.config.primary_repo.name }}_${{ matrix.config.primary_repo.commit }}
+      primaryTool:     ${{ matrix.config.primary_repo.tool }}
+      primaryDevice:   ${{ matrix.config.primary_repo.device }}
+      primaryPAT:      ${{ secrets.U_GITEA_PAT }}
+      auxiliaryRepoHost: ${{ matrix.config.auxiliary_repo.repo_host }}
+      auxiliaryRepoUser: ${{ matrix.config.auxiliary_repo.repo_user }}
+      auxiliaryRepoName: ${{ matrix.config.auxiliary_repo.repo_name }}
+      auxiliaryName:     ${{ matrix.config.auxiliary_repo.name }}
+      auxiliaryBranch:   ${{ matrix.config.auxiliary_repo.branch }}
+      auxiliaryCommit:   ${{ matrix.config.auxiliary_repo.commit }}
+      auxiliarySparse:   ${{ matrix.config.auxiliary_repo.sparse }}
+      auxiliaryRepo:     ${{ matrix.config.auxiliary_repo.repo_host }}/${{ matrix.config.auxiliary_repo.repo_user }}/${{ matrix.config.auxiliary_repo.repo_name }}
+      auxiliaryApiRepo:  ${{ matrix.config.auxiliary_repo.repo_host }}/api/v1/repos/${{ matrix.config.auxiliary_repo.repo_user }}/${{ matrix.config.auxiliary_repo.repo_name }}
+      auxiliaryDir:      ${{ matrix.config.auxiliary_repo.name }}_${{ matrix.config.auxiliary_repo.commit }}
+      auxiliaryPAT:      ${{ secrets.U_GITEA_PAT }}
+      inter_ver_file:            ${{ matrix.config.inter_ver_file }}
+      inter_cache_scoop_seed:    ${{ matrix.config.inter_cache_scoop_seed }}
+    steps:
+    - name: S100 - Checkout workflow repository
+      uses: actions/checkout@v4
+    - name: S110 - Download workflow artifacts
+      uses: actions/download-artifact@master
+      with:
+        merge-multiple: true
+    - name: S120 - Parse workflow versions
+      id: versions
+      shell: bash
+      run: |
+        outputs() { step_id="${{ github.action }}"; for var in "$@" ; do echo steps.${step_id}.outputs.${var}="${!var}"; echo "${var}=${!var}" >> $GITHUB_OUTPUT; done; }
+        ls -R
+        source ${{ env.inter_ver_file }}/${{ env.inter_ver_file }}
+        outputs primaryVer auxiliaryVer target_arch target_vendor target_os target_abi
+        echo "primaryCommit=$primaryCommit" >> $GITHUB_ENV
+        echo "primaryDir=${primaryName}_${primaryCommit}" >> $GITHUB_ENV
+        echo "auxiliaryCommit=$auxiliaryCommit" >> $GITHUB_ENV
+        echo "auxiliaryDir=${auxiliaryName}_${auxiliaryCommit}" >> $GITHUB_ENV
+
+        primary_extra_name="$target_arch-$target_abi"
+        outputs primary_extra_name
+    - name: S130 - Install build environments
+      if: ${{ steps.versions.outputs.target_abi != 'gnu' || steps.versions.outputs.target_abi != 'gnueabi' }}
+      run: |
+        if [ "${{ env.ACT }}" == 'true' ]; then
+          sudo sed -i -e 's/archive.ubuntu.com/mirrors.ustc.edu.cn/g' \
+                      -e 's/security.ubuntu.com/mirrors.ustc.edu.cn/g' \
+          /etc/apt/sources.list
+        fi
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential bc curl git zip ftp \
+          gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
+          libssl-dev lftp zstd wget libfl-dev \
+          python2 python3 libarchive-tools
+    - name: S131 - Install build environments
+      if: ${{ steps.versions.outputs.target_abi != 'musl' || steps.versions.outputs.target_abi != 'musleabi' }}
+      run: |
+        if [ "${{ env.ACT }}" == 'true' ]; then
+          sudo sed -i -e 's/archive.ubuntu.com/mirrors.ustc.edu.cn/g' \
+                      -e 's/security.ubuntu.com/mirrors.ustc.edu.cn/g' \
+          /etc/apt/sources.list
+        fi
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential bc curl git zip ftp \
+          gcc-aarch64-linux-musl gcc-arm-linux-musleabi \
+          libssl-dev lftp zstd wget libfl-dev \
+          python2 python3 libarchive-tools
+
+    - name: S200 - Check workflow environments
+      id: check
+      shell: bash
+      run: |
+        ## VARs setup
+        outputs() { step_id="${{ github.action }}"; for var in "$@" ; do echo steps.${step_id}.outputs.${var}="${!var}"; echo "${var}=${!var}" >> $GITHUB_OUTPUT; done; }
+        if [ "${{ env.primarySparse }}" == '' ]; then
+          primary_sparse_set=false;
+        else
+          primary_sparse_set=true;
+        fi
+        if [ "${{ env.primaryCommit }}" == '' ]; then
+          primary_commit_set=false;
+        else
+          primary_commit_set=true;
+        fi
+        if [ "${{ env.auxiliarySparse }}" == '' ]; then
+          auxiliary_sparse_set=false;
+        else
+          auxiliary_sparse_set=true;
+        fi
+        if [ "${{ env.auxiliaryCommit }}" == '' ]; then
+          auxiliary_commit_set=false;
+        else
+          auxiliary_commit_set=true;
+        fi
+        outputs primary_sparse_set primary_commit_set auxiliary_sparse_set auxiliary_commit_set
+
+        if [ "${{ env.U_ACT }}" == 'act_nas6' ]; then
+          echo "## used act_nas6"
+          git config --global url."http://nas6.ycxy.tech:2082/".insteadof "https://gitea.ycxy.tech/"
+        elif [ "${{ env.U_ACT }}" == 'act_cf6' ]; then
+          echo "## used act_cf6"
+          git config --global url."http://cf6.ycxy.tech:2082/".insteadof "https://gitea.ycxy.tech/"
+        elif [ "${{ env.U_ACT }}" == 'act_lh' ]; then
+          echo "## used act_lh"
+          git config --global url."http://192.168.1.7:2082/".insteadof "https://gitea.ycxy.tech/"
+        fi
+    - name: S210 - Update workflow environments
+      if: ${{ steps.check.outputs.primary_commit_set != 'true' }}
+      shell: bash
+      run: |
+        set -v
+        escapedSparseDir="$(echo $primarySparse | sed 's;/;%2F;g')"
+        if [ "${{ steps.check.outputs.primary_sparse_set }}" == 'true' ]; then
+          commit=$(curl -X GET -H "Content-Type:application/json" "https://$primaryPAT@$primaryApiRepo/commits?sha=$primaryBranch&path=$escapedSparseDir" | jq -r '.[0].sha')
+        else
+          commit="$(git ls-remote https://$primaryPAT@$primaryRepo --tags $primaryBranch | awk '{print $1;}')";
+        fi
+        echo "primaryCommit=$commit" >> $GITHUB_ENV
+        echo "primaryDir=${primaryName}_${commit}" >> $GITHUB_ENV
+    - name: S211 - Update workflow environments
+      if: ${{ env.auxiliaryName != '' && steps.check.outputs.auxiliary_commit_set != 'true' }}
+      shell: bash
+      run: |
+        set -v
+        escapedSparseDir="$(echo $auxiliarySparse | sed 's;/;%2F;g')"
+        if [ "${{ steps.check.outputs.auxiliary_sparse_set }}" == 'true' ]; then
+          commit=$(curl -X GET -H "Content-Type:application/json" "https://$auxiliaryPAT@$auxiliaryApiRepo/commits?sha=$auxiliaryBranch&path=$escapedSparseDir" | jq -r '.[0].sha')
+        else
+          commit="$(git ls-remote https://$auxiliaryPAT@$auxiliaryRepo --tags $auxiliaryBranch | awk '{print $1;}')";
+        fi
+        echo "auxiliaryCommit=$commit" >> $GITHUB_ENV
+        echo "auxiliaryDir=${auxiliaryName}_${commit}" >> $GITHUB_ENV
+    - name: S220 - Initialize workflow variables
+      id: vars
+      shell: bash
+      run: |
+        ## VARs setup
+        outputs() { step_id="${{ github.action }}"; for var in "$@" ; do echo steps.${step_id}.outputs.${var}="${!var}"; echo "${var}=${!var}" >> $GITHUB_OUTPUT; done; }
+        ## DIRs setup
+        if [ "${{ runner.os }}" == 'Windows' ]; then
+          gh_workspace_nix="$(cygpath -u '${{ github.workspace }}')"
+          gh_workspace_mix="$(cygpath -m '${{ github.workspace }}')"
+        else
+          gh_workspace_nix="${{ github.workspace }}"
+          gh_workspace_mix="${{ github.workspace }}"
+        fi
+        echo "gh_workspace_nix=${gh_workspace_nix}" >> $GITHUB_ENV
+        echo "gh_workspace_mix=${gh_workspace_mix}" >> $GITHUB_ENV
+
+        source_dir=$gh_workspace_nix/$primaryDir/$primaryName/$primarySparse
+        source_dir=$gh_workspace_nix/$primaryDir/$primaryName
+        build_dir=$gh_workspace_nix/build
+        #build_dir=$source_dir
+        install_dir=$gh_workspace_nix/install
+
+        outputs source_dir build_dir install_dir
+        echo "source_dir=${source_dir}" >> $GITHUB_ENV
+        echo "build_dir=${build_dir}" >> $GITHUB_ENV
+        echo "install_dir=${install_dir}" >> $GITHUB_ENV
+
+        kmod_build_dir=$gh_workspace_nix/kmod_build
+        echo "kmod_build_dir=${kmod_build_dir}" >> $GITHUB_ENV
+        outputs kmod_build_dir
+
+        if [ "${{ env.auxiliaryName }}" != '' ]; then
+          aux_source_dir=$gh_workspace_nix/$auxiliaryDir/$auxiliaryName
+          aux_build_dir=$gh_workspace_nix/$auxiliaryDir/build
+          aux_build_dir=$aux_source_dir
+          aux_install_dir=$gh_workspace_nix/install
+
+          outputs aux_source_dir aux_build_dir aux_install_dir
+          echo "aux_source_dir=${aux_source_dir}" >> $GITHUB_ENV
+          echo "aux_build_dir=${aux_build_dir}" >> $GITHUB_ENV
+          echo "aux_install_dir=${aux_install_dir}" >> $GITHUB_ENV
+        fi
+
+        ARCH="${{ steps.versions.outputs.target_arch }}"
+        case ${{ matrix.job.target }} in
+          aarch64-*-linux-*) ARCH="arm64" ;;
+          aarch64-linux-*) ARCH="arm64" ;;
+        esac;
+        CROSS_COMPILE="${{ matrix.job.target }}-"
+        common_args="-j$(nproc --all)"
+        if [ -n "$VERBOSE" ]; then
+          common_args="$common_args V=1"
+        fi
+
+        #common_args="$common_args O=$install_dir"
+        common_args="$common_args ARCH=$ARCH"
+        common_args="$common_args CROSS_COMPILE=$CROSS_COMPILE"
+        if [ ${{ matrix.job.enable-ccache }} == true ]; then
+          common_args="$common_args CC=\"ccache ${CROSS_COMPILE}gcc\""
+        else
+          common_args="$common_args CC=${CROSS_COMPILE}gcc"
+        fi
+        defconfig="${primaryDevice}_defconfig"
+        config_options="$common_args O=$build_dir $defconfig"
+        build_options="$common_args O=$build_dir all"
+        install_options="prefix=$install_dir"
+        outputs CROSS_COMPILE config_options build_options install_options
+
+    - name: S230 - Create workflow directories
+      shell: bash
+      run: |
+        ## Create build/work space
+        [ -z $primaryDir ]      || mkdir -p $primaryDir
+        [ -z $auxiliaryDir ]    || mkdir -p $auxiliaryDir
+        [ -e $build_dir ]       || mkdir -p $build_dir
+        [ -e $aux_build_dir ]   || mkdir -p $aux_build_dir
+        [ -e $install_dir ]     || mkdir -p $install_dir
+        [ -e $aux_install_dir ] || mkdir -p $aux_install_dir
+        pwd && ls
+    - name: S240 - Install workflow prerequisites
+      shell: bash
+      run: |
+        echo "## Installing workflow prerequisites ..."
+        echo "## Nothing to do."
+    - name: S250 - Setup workflow ccache
+      if: matrix.job.enable-ccache == true
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        create-symlink: true
+        append-timestamp: false
+        key: ccache-${{ env.primaryName }}-${{ env.primaryDevice }}-${{ env.primaryCommit }}
+        restore-keys: |
+          ccache-${{ env.primaryName }}-${{ env.primaryDevice }}-
+    - name: S260 - Update environment variables
+      shell: bash
+      run: |
+        echo "## Installing workflow prerequisites ..."
+        echo "## Nothing to do."
+    - name: S261 - Inspect environment variables
+      run: env
+
+    - name: S330 - Extract primary source tarball
+      shell: bash
+      continue-on-error: false
+      run: |
+        tar -xvf ${{ env.primaryName }}-${{ env.primaryDevice }}-source-${{ env.primaryCommit }}/${{ env.primaryName }}-${{ env.primaryDevice }}-source.tar
+    - name: S331 - Extract auxiliary source tarball
+      if: env.auxiliaryName != ''
+      shell: bash
+      continue-on-error: true
+      run: |
+        tar -xvf ${{ env.auxiliaryName }}-source-${{ env.auxiliaryCommit }}/${{ env.auxiliaryName }}-source.tar || true
+
+    - name: S400 - Show workflow information
+      shell: bash
+      run: |
+        ## Info
+        # commit info
+        # environment
+        echo "## environment"
+        echo "CI='${CI}'"
+        # tooling info display
+        echo "## tooling"
+        which gcc >/dev/null 2>&1 && (gcc --version | head -1) || true
+
+    - name: S500 - Patch primary target
+      shell: bash
+      run: |
+        echo "## Patching ..."
+        echo "## Nothing to do."
+    - name: S510 - Bootstrap primary target
+      shell: bash
+      run: |
+        echo "## Bootstraping ..."
+        echo "## Nothing to do."
+    - name: S520 - Configure primary target
+      shell: bash
+      run: |
+        echo "## Configuring ..."
+        #cd ${{ steps.vars.outputs.source_dir }}
+        #make ${{ steps.vars.outputs.config_options }}
+    - name: S530 - Build primary target
+      shell: bash
+      run: |
+        echo "## Building ..."
+        cd ${{ steps.vars.outputs.source_dir }}
+        make ${{ steps.vars.outputs.build_options }}
+    - name: S540 - Install workflow targets
+      shell: bash
+      run: |
+        echo "## Installing ..."
+        cd ${{ steps.vars.outputs.source_dir }}
+        make ${{ steps.vars.outputs.install_options }}
+
+    - name: S600 - Test workflow targets
+      if: matrix.job.skip-tests != true
+      shell: bash
+      run: |
+        echo "## Testing ..."
+
+    - name: S700 - Archive build artifacts
+      shell: bash
+      run: |
+        ## Archive artifacts
+
+        cd $install_dir
+        tar \
+            -czf $gh_workspace_nix/${{ env.primaryName }}-${{ steps.versions.outputs.primary_extra_name }}.tar.gz \
+            ${{ steps.vars.outputs.install_dir }} \
+            || true
+    - name: S710 - Archive log artifacts
+      shell: bash
+      run: |
+        ## Archive artifacts
+      if: ${{ always() }}
+    - name: S800 - Upload build artifacts
+      uses: actions/upload-artifact@master
+      with:
+        name: ${{ env.primaryName }}-${{ steps.versions.outputs.primary_extra_name }}.tar.gz
+        path: |
+          ${{ env.primaryName }}-${{ steps.versions.outputs.primary_extra_name }}.tar.gz
+    - name: S810 - Upload log artifacts
+      uses: actions/upload-artifact@master
+      with:
+        name: ${{ env.primaryName }}-${{ steps.versions.outputs.primary_extra_name }}-buildlog.tar.gz
+        path: |
+          ${{ env.primaryName }}-${{ steps.versions.outputs.primary_extra_name }}-buildlog.tar.gz
+      if: ${{ always() }}

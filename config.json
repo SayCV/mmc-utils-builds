@@ -1,0 +1,27 @@
+[
+    {
+        "##comment": "spell-checker: ignore (abbrev/names) mhei ",
+        "primary_repo": {
+            "name": "mmc-utils",
+            "repo_host": "github.com",
+            "repo_user": "mhei",
+            "repo_name": "mmc-utils",
+            "branch": "main",
+            "commit": "",
+            "sparse": "",
+            "tool": "gcc",
+            "device": "none",
+            "version": ""
+        },
+        "auxiliary_repo": {
+            "name": "",
+            "repo_host": "",
+            "repo_user": "",
+            "repo_name": "",
+            "branch": "",
+            "commit": "",
+            "sparse": ""
+        },
+        "inter_ver_file": "inter_ver_file.txt"
+    }
+]
