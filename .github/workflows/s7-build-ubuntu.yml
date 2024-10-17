@@ -62,7 +62,12 @@ jobs:
       run: |
         outputs() { step_id="${{ github.action }}"; for var in "$@" ; do echo steps.${step_id}.outputs.${var}="${!var}"; echo "${var}=${!var}" >> $GITHUB_OUTPUT; done; }
         ls -R
-        source ${{ env.inter_ver_file }}/${{ env.inter_ver_file }}
+        if [ "${{ env.ACT }}" == 'true' ]; then
+          source ${{ env.inter_ver_file }}/${{ env.inter_ver_file }}
+        else
+          source ${{ env.inter_ver_file }}
+        fi
+
         outputs primaryVer auxiliaryVer target_arch target_vendor target_os target_abi
         echo "primaryCommit=$primaryCommit" >> $GITHUB_ENV
         echo "primaryDir=${primaryName}_${primaryCommit}" >> $GITHUB_ENV
@@ -270,13 +275,21 @@ jobs:
       shell: bash
       continue-on-error: false
       run: |
-        tar -xvf ${{ env.primaryName }}-${{ env.primaryDevice }}-source-${{ env.primaryCommit }}/${{ env.primaryName }}-${{ env.primaryDevice }}-source.tar
+        if [ "${{ env.ACT }}" == 'true' ]; then
+          tar -xvf ${{ env.primaryName }}-${{ env.primaryDevice }}-source-${{ env.primaryCommit }}/${{ env.primaryName }}-${{ env.primaryDevice }}-source.tar
+        else
+          tar -xvf ${{ env.primaryName }}-${{ env.primaryDevice }}-source.tar
+        fi
     - name: S331 - Extract auxiliary source tarball
       if: env.auxiliaryName != ''
       shell: bash
       continue-on-error: true
       run: |
-        tar -xvf ${{ env.auxiliaryName }}-source-${{ env.auxiliaryCommit }}/${{ env.auxiliaryName }}-source.tar || true
+        if [ "${{ env.ACT }}" == 'true' ]; then
+          tar -xvf ${{ env.auxiliaryName }}-source-${{ env.auxiliaryCommit }}/${{ env.auxiliaryName }}-source.tar || true
+        else
+          tar -xvf ${{ env.auxiliaryName }}-source.tar || true
+        fi
 
     - name: S400 - Show workflow information
       shell: bash
