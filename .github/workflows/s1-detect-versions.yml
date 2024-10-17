@@ -232,7 +232,20 @@ jobs:
         # The target triplet
         triplet="${{ matrix.job.target }}"
         # Split into architecture, vendor, and OS-ABI
-        IFS='-' read -r arch vendor os abi <<< $(echo "$triplet" | sed 's/\(.*-\)\(.*\)-/\1\2-/')
+        nbr=$(echo aarch64-linux-musl | awk -F '-' '{print NF}')
+        if [ "$nbr" == '4' ]; then
+          IFS='-' read -r arch vendor os abi <<< $(echo "$triplet" | sed 's/\(.*-\)\(.*\)-/\1\2-/')
+        elif [ "$nbr" == '3' ]; then
+          IFS='-' read -r arch os abi <<< $(echo "$triplet" | sed 's/\(.*-\)\(.*\)-/\1\2-/')
+          vendor="null"
+        else
+          IFS='-' read -r arch os abi <<< $(echo "$triplet" | sed 's/\(.*-\)\(.*\)-/\1\2-/')
+          arch
+          arch="x86_64"
+          vendor="null"
+          os="linux"
+          abi="gnu"
+        fi
         # Output the parsed values
         echo "Architecture: $arch"
         echo "Vendor: $vendor"
