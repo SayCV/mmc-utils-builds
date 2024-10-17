@@ -247,7 +247,7 @@ jobs:
         #patch=$(grep '^patch=' "$file" | cut -d'=' -f2)
         # Combine the values into a version string
         version="$major$minor-rev$patch"
-        cd $source_dir; version="$(shell git describe --abbrev=6 --always --tags)"; cd -
+        cd $source_dir; version="$(git describe --abbrev=6 --always --tags)"; cd -
         # Print the version
         echo "## ${{ env.primaryName }} Version: $version"
 
